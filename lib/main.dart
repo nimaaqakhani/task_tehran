@@ -1,41 +1,50 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_application_1/features/notifications/notification_service.dart';
+import 'package:flutter_application_1/features/core/widgets/WelcomeScreen.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import 'features/hive_text/presentation/bloc/hive_text_bloc.dart';
-import 'features/hive_text/presentation/pages/hive_text_screen.dart';
 import 'features/hive_text/data/repository/hive_repository_impl.dart';
 import 'features/hive_text/domain/usecases/analyze_input.dart';
 import 'features/hive_text/domain/usecases/clear_history.dart';
+import 'features/notifications/notification_service.dart';
+import 'features/student_data/data/datasources/student_local_data_source.dart';
+import 'features/student_data/data/repositories/student_repository_impl.dart';
+import 'features/student_data/domain/usecases/add_student_usecase.dart';
+import 'features/student_data/domain/usecases/get_all_students_usecase.dart';
+import 'features/student_data/domain/usecases/delete_student_usecase.dart';
+import 'features/student_data/domain/usecases/update_student_usecase.dart';
 
-/// ## MyApp
-/// The root widget of the Flutter application. It initializes required services,
-/// sets up dependency injection, and provides the main application structure.
-///
-/// Responsibilities include:
-/// - Initializing Hive for local storage
-/// - Initializing and starting the NotificationService
-/// - Setting up repository and use case instances for the HiveText feature
-/// - Providing the `HiveTextBloc` to the widget tree via `BlocProvider`
-/// - Displaying the `HiveTextScreen` as the home screen
-///
-/// ### Properties
-/// - `hiveRepository`: An instance of `HiveRepositoryImpl` used for data persistence
-/// - `analyzeInputUseCase`: Use case for analyzing user input
-/// - `clearHistoryUseCase`: Use case for clearing stored history
-///
-/// ### Methods
-/// - `build(BuildContext context)`: Builds the widget tree and injects dependencies.
-
-
-
+late final AddStudentUseCase addStudentUseCase;
+late final GetAllStudentsUseCase getAllStudentsUseCase;
+late final DeleteStudentUseCase deleteStudentUseCase;
+late final UpdateStudentUseCase updateStudentUseCase;
+late final HiveRepositoryImpl hiveRepository;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Hive.initFlutter();
-  await HiveRepositoryImpl.init();
-  await NotificationService.init();
-  await NotificationService.startNotifications();
+
+  try {
+    await Hive.initFlutter();
+    await AndroidAlarmManager.initialize();
+    await HiveRepositoryImpl.init();
+    hiveRepository = HiveRepositoryImpl();
+
+    final studentDataSource = StudentLocalDataSourceImpl();
+    await studentDataSource.init();
+    final studentRepository = StudentRepositoryImpl(studentDataSource);
+
+    addStudentUseCase = AddStudentUseCase(studentRepository);
+    getAllStudentsUseCase = GetAllStudentsUseCase(studentRepository);
+    deleteStudentUseCase = DeleteStudentUseCase(studentRepository);
+    updateStudentUseCase = UpdateStudentUseCase(studentRepository);
+
+    await NotificationService.start();
+
+    debugPrint("Main: All services initialized successfully");
+  } catch (e, stack) {
+    debugPrint("Main: Initialization error: $e\n$stack");
+  }
 
   runApp(const MyApp());
 }
@@ -45,19 +54,28 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final HiveRepositoryImpl hiveRepository = HiveRepositoryImpl();
-    final AnalyzeInput analyzeInputUseCase = AnalyzeInput(hiveRepository);
-    final ClearHistory clearHistoryUseCase = ClearHistory(hiveRepository);
+    final analyzeInputUseCase = AnalyzeInput(hiveRepository);
+    final clearHistoryUseCase = ClearHistory(hiveRepository);
 
-    return BlocProvider(
-      create: (context) => HiveTextBloc(
-        repository: hiveRepository,
-        analyzeInputUseCase: analyzeInputUseCase,
-        clearHistoryUseCase: clearHistoryUseCase,
-      ),
-      child: const MaterialApp(
+    return MultiBlocProvider(
+      providers: [
+        BlocProvider(
+          create: (_) => HiveTextBloc(
+            repository: hiveRepository,
+            analyzeInputUseCase: analyzeInputUseCase,
+            clearHistoryUseCase: clearHistoryUseCase,
+          ),
+        ),
+      ],
+      child: MaterialApp(
         debugShowCheckedModeBanner: false,
-        home: HiveTextScreen(),
+        title: 'برنامه چند ماژولی',
+        home: WelcomeScreen(
+          addStudent: addStudentUseCase,
+          getAllStudents: getAllStudentsUseCase,
+          deleteStudent: deleteStudentUseCase,
+          updateStudent: updateStudentUseCase,
+        ),
       ),
     );
   }

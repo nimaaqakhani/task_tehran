@@ -1,83 +1,65 @@
 import 'dart:io';
-import 'dart:async';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-/// ## NotificationService
-/// A service class responsible for managing local notifications and scheduled alarms
-/// in a Flutter application, primarily for Android devices. It uses 
-/// `flutter_local_notifications` for displaying notifications and 
-/// `android_alarm_manager_plus` for scheduling periodic tasks.
-///
-/// This class provides methods to:
-/// - Initialize the notification plugin and alarm manager
-/// - Request notification permissions
-/// - Display immediate notifications
-/// - Schedule periodic notifications at intervals of 5 minutes, 10 minutes, 1 hour, and 6 hours
-/// - Dispose timers when they are no longer needed
-///
-/// ### Properties
-/// - `_oneMinTimer`: Timer for one-minute periodic notifications (currently unused)
-/// - `_fiveMinTimer`: Timer for five-minute periodic notifications
-/// - `_tenMinTimer`: Timer for ten-minute periodic notifications
-///
-/// ### Methods
-/// - `init()`: Initializes local notifications and the Android alarm manager.
-/// - `requestPermission()`: Requests notification permission from the user (Android only).
-/// - `showNotification({id, channelId, channelName, title, body})`: Shows an immediate notification with the specified details.
-/// - `_callback5Min()`: Callback function to display a notification every 5 minutes.
-/// - `_callback10Min()`: Callback function to display a notification every 10 minutes.
-/// - `_callback1Hour()`: Callback function to display a notification every 1 hour.
-/// - `_callback6Hour()`: Callback function to display a notification every 6 hours.
-/// - `scheduleNotifications()`: Schedules periodic notifications using timers and Android alarm manager.
-/// - `startNotifications()`: Requests permissions, triggers initial notifications, and starts scheduling periodic notifications.
-/// - `dispose()`: Cancels all active timers to free resources.
-///
-/// ### Usage
-/// ```dart
-/// // Initialize the service
-/// await NotificationService.init();
-///
-/// // Start notifications
-/// await NotificationService.startNotifications();
-///
-/// // Dispose when no longer needed (e.g., on app close)
-/// NotificationService.dispose();
-/// ```
-
-
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
 
+@pragma('vm:entry-point')
 class NotificationService {
-  static Timer? _oneMinTimer;
-  static Timer? _fiveMinTimer;
-  static Timer? _tenMinTimer;
+  static const int _id5Min = 5;
+  static const int _id10Min = 10;
+  static const int _id1Hour = 2;
+  static const int _id6Hour = 3;
 
+  static bool _isInitialized = false;
+  static bool _isScheduled = false;
   static Future<void> init() async {
+    if (_isInitialized) return;
+    _isInitialized = true;
+
+    const AndroidInitializationSettings androidSettings =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const InitializationSettings settings = InitializationSettings(
+      android: androidSettings,
+    );
+
+    await flutterLocalNotificationsPlugin.initialize(settings);
+    await AndroidAlarmManager.initialize();
+
     if (Platform.isAndroid) {
-      const AndroidInitializationSettings androidSettings =
-          AndroidInitializationSettings('@mipmap/ic_launcher');
-
-      const InitializationSettings settings =
-          InitializationSettings(android: androidSettings);
-
-      await flutterLocalNotificationsPlugin.initialize(settings);
+      await _requestExactAlarmPermission();
     }
 
-    await AndroidAlarmManager.initialize();
+    print("NotificationService: Initialized");
+  }
+
+  static Future<void> _requestExactAlarmPermission() async {
+    try {
+      final androidPlugin = flutterLocalNotificationsPlugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
+      if (androidPlugin != null &&
+          !(await androidPlugin.canScheduleExactNotifications() ?? true)) {
+        await androidPlugin.requestExactAlarmsPermission();
+      }
+    } catch (e) {
+      print("Exact alarm error: $e");
+    }
   }
 
   static Future<void> requestPermission() async {
-    if (Platform.isAndroid) {
-      PermissionStatus status = await Permission.notification.status;
-      if (!status.isGranted) {
-        PermissionStatus result = await Permission.notification.request();
-        if (!result.isGranted) {
-          print("Notification permission not granted!");
-        }
-      }
+    if (!Platform.isAndroid) return;
+    final status = await Permission.notification.status;
+    if (!status.isGranted) {
+      final result = await Permission.notification.request();
+      print(
+        result.isGranted
+            ? "POST_NOTIFICATIONS granted"
+            : "POST_NOTIFICATIONS denied",
+      );
     }
   }
 
@@ -88,16 +70,20 @@ class NotificationService {
     String? title,
     String? body,
   }) async {
-    final AndroidNotificationDetails androidDetails =
+    const AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
-      channelId,
-      channelName,
-      channelDescription: 'Scheduled notification',
-      importance: Importance.high,
-      priority: Priority.high,
-    );
+          'scheduled_notifications',
+          'Scheduled Notifications',
+          channelDescription: 'نوتیفیکیشن‌های زمان‌بندی شده',
+          importance: Importance.high,
+          priority: Priority.high,
+          showWhen: true,
+          icon: '@mipmap/ic_launcher',
+        );
 
-    final NotificationDetails details = NotificationDetails(android: androidDetails);
+    const NotificationDetails details = NotificationDetails(
+      android: androidDetails,
+    );
 
     await flutterLocalNotificationsPlugin.show(
       id,
@@ -105,91 +91,104 @@ class NotificationService {
       body ?? 'این نوتیفیکیشن زمان‌بندی شده است.',
       details,
     );
+
+    print("NotificationService: Shown ID=$id");
   }
 
-  static Future<void> _callback5Min() async {
-    await showNotification(
-      id: 5,
-      channelId: 'channel_5min',
-      channelName: 'Every 5 Minutes',
-      title: 'نوتیفیکیشن 5 دقیقه‌ای',
-      body: 'این نوتیفیکیشن هر 5 دقیقه نمایش داده می‌شود.',
-    );
-  }
+  @pragma('vm:entry-point')
+  static Future<void> _callback5Min() async =>
+      _showScheduled(_id5Min, '5 دقیقه', 'هر 5 دقیقه');
 
-  static Future<void> _callback10Min() async {
-    await showNotification(
-      id: 10,
-      channelId: 'channel_10min',
-      channelName: 'Every 10 Minutes',
-      title: 'نوتیفیکیشن 10 دقیقه‌ای',
-      body: 'این نوتیفیکیشن هر 10 دقیقه نمایش داده می‌شود.',
-    );
-  }
+  @pragma('vm:entry-point')
+  static Future<void> _callback10Min() async =>
+      _showScheduled(_id10Min, '10 دقیقه', 'هر 10 دقیقه');
 
-  static Future<void> _callback1Hour() async {
-    await showNotification(
-      id: 2,
-      channelId: 'channel_1hour',
-      channelName: 'Every 1 Hour',
-      title: 'نوتیفیکیشن 1 ساعته',
-      body: 'این نوتیفیکیشن هر 1 ساعت نمایش داده می‌شود.',
-    );
-  }
+  @pragma('vm:entry-point')
+  static Future<void> _callback1Hour() async =>
+      _showScheduled(_id1Hour, '1 ساعت', 'هر 1 ساعت');
 
-  static Future<void> _callback6Hour() async {
+  @pragma('vm:entry-point')
+  static Future<void> _callback6Hour() async =>
+      _showScheduled(_id6Hour, '6 ساعت', 'هر 6 ساعت');
+
+  static Future<void> _showScheduled(
+    int id,
+    String interval,
+    String body,
+  ) async {
     await showNotification(
-      id: 3,
-      channelId: 'channel_6hour',
-      channelName: 'Every 6 Hours',
-      title: 'نوتیفیکیشن 6 ساعته',
-      body: 'این نوتیفیکیشن هر 6 ساعت نمایش داده می‌شود.',
+      id: id,
+      channelId: 'channel_$id',
+      channelName: 'Every $interval',
+      title: 'نوتیفیکیشن $interval',
+      body: 'این نوتیفیکیشن $body نمایش داده می‌شود.',
     );
   }
 
   static Future<void> scheduleNotifications() async {
-  
+    if (_isScheduled) {
+      print("Already scheduled. Skipping.");
+      return;
+    }
 
-    _fiveMinTimer = Timer.periodic(
-      const Duration(minutes: 5),
-      (timer) async => await _callback5Min(),
-    );
+    final config = [
+      _AlarmConfig(_id5Min, Duration(minutes: 5), _callback5Min),
+      _AlarmConfig(_id10Min, Duration(minutes: 10), _callback10Min),
+      _AlarmConfig(_id1Hour, Duration(hours: 1), _callback1Hour),
+      _AlarmConfig(_id6Hour, Duration(hours: 6), _callback6Hour),
+    ];
 
-    _tenMinTimer = Timer.periodic(
-      const Duration(minutes: 10),
-      (timer) async => await _callback10Min(),
-    );
+    for (final c in config) {
+      try {
+        final success = await AndroidAlarmManager.periodic(
+          c.duration,
+          c.id,
+          c.callback,
+          startAt: DateTime.now().add(const Duration(seconds: 5)),
+          wakeup: true,
+          exact: true,
+          allowWhileIdle: true,
+          rescheduleOnReboot: true,
+        );
+        print("Scheduled ${c.duration.inMinutes}min (ID: ${c.id}) -> $success");
+      } catch (e) {
+        print("Failed to schedule ID ${c.id}: $e");
+      }
+    }
 
-    await AndroidAlarmManager.periodic(
-      const Duration(hours: 1),
-      2,
-      _callback1Hour,
-      wakeup: true,
-      exact: true,
-    );
-
-    await AndroidAlarmManager.periodic(
-      const Duration(hours: 6),
-      3,
-      _callback6Hour,
-      wakeup: true,
-      exact: true,
-    );
+    _isScheduled = true;
   }
 
-  static Future<void> startNotifications() async {
-    await requestPermission();
-
-    await _callback5Min();
-    await _callback10Min();
-    await _callback1Hour();
-    await _callback6Hour();
-    await scheduleNotifications();
+  static Future<void> start() async {
+    try {
+      await init();
+      await requestPermission();
+      await _callback5Min();
+      await _callback10Min();
+      await scheduleNotifications();
+      print("NotificationService: Started successfully");
+    } catch (e, stack) {
+      print("Start failed: $e\n$stack");
+    }
   }
 
-  static void dispose() {
-    _oneMinTimer?.cancel();
-    _fiveMinTimer?.cancel();
-    _tenMinTimer?.cancel();
+  static Future<void> cancelAll() async {
+    final ids = [_id5Min, _id10Min, _id1Hour, _id6Hour];
+    for (final id in ids) {
+      try {
+        await AndroidAlarmManager.cancel(id);
+        print("Cancelled ID: $id");
+      } catch (e) {
+        print("Failed to cancel ID $id: $e");
+      }
+    }
+    _isScheduled = false;
   }
+}
+
+class _AlarmConfig {
+  final int id;
+  final Duration duration;
+  final Function callback;
+  _AlarmConfig(this.id, this.duration, this.callback);
 }
